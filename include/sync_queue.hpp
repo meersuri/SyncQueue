@@ -14,22 +14,31 @@ class sync_queue {
     std::condition_variable m_cv;
     public:
         sync_queue<T>(size_t max_size=0): m_max_size(max_size) {};
-        void push(const T& item);
+        bool push(const T& item, std::chrono::milliseconds timeout=std::chrono::milliseconds(0));
         T pop();
 };
 
 template <typename T>
-void sync_queue<T>::push(const T& item) {
+bool sync_queue<T>::push(const T& item, std::chrono::milliseconds timeout) {
     if (m_max_size > 0)
     {
         std::unique_lock<std::mutex> lock(m_mutex);
-        m_cv.wait(lock, [this]() { return m_queue.size() < m_max_size; });
+        if (timeout > std::chrono::milliseconds(0)) {
+            auto now = std::chrono::steady_clock::now();
+            if (!m_cv.wait_until(lock, now + timeout, [this]() { return m_queue.size() < m_max_size; })) {
+                return false;
+            }
+        }
+        else {
+            m_cv.wait(lock, [this]() { return m_queue.size() < m_max_size; });
+        }
     }
     {
         std::lock_guard lock(m_mutex);
         m_queue.push(item);
     }
     m_cv.notify_one();
+    return true;
 }
 
 template <typename T>
