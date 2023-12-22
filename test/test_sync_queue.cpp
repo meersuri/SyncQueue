@@ -60,6 +60,33 @@ TEST(Bounded, BlockingPopTimeout) {
     EXPECT_FALSE(queue.pop(100ms).has_value());
 }
 
+TEST(TimeoutDuration, PushTimeout) {
+    sync_queue<int> queue(1);
+    queue.push(1);
+    auto start = std::chrono::steady_clock::now();
+    std::thread p([&](){
+            std::this_thread::sleep_for(11ms);
+            queue.pop();
+            });
+    queue.push(2);
+    p.join();
+    auto end = std::chrono::steady_clock::now();
+    EXPECT_TRUE(end - start > 11ms);
+}
+
+TEST(TimeoutDuration, PopTimeout) {
+    sync_queue<int> queue;
+    auto start = std::chrono::steady_clock::now();
+    std::thread p([&](){
+            std::this_thread::sleep_for(15ms);
+            queue.push(5);
+            });
+    EXPECT_EQ(queue.pop().value(), 5);
+    auto end = std::chrono::steady_clock::now();
+    p.join();
+    EXPECT_TRUE(end - start > 15ms);
+}
+
 TEST(Multithreaded, OneProducerThread) {
     sync_queue<int> queue;
     std::thread p([&](){ queue.push(5); });
@@ -155,3 +182,36 @@ TEST(Multithreaded, BlockingPopProducerTooSlow) {
     EXPECT_EQ(queue.pop(5ms).value(), 5);
     p.join();
 }
+
+TEST(Multithreaded, MultiProducerConsumer) {
+    sync_queue<int> in_queue, out_queue;
+    std::vector<std::thread> workers;
+    int worker_count = 10;
+    for (int i = 0; i < worker_count; ++i) {
+        workers.emplace_back([&]() {
+                    while(true) {
+                        int item = in_queue.pop().value();
+                        if (item == -1) break;
+                        out_queue.push(item);
+                    }
+                });
+    }
+    std::vector<int> truth;
+    for (int i = 0; i < 500; ++i) {
+        in_queue.push(i);
+        truth.push_back(i);
+    }
+    for (int i = 0; i < worker_count; ++i) {
+        in_queue.push(-1);
+    }
+    std::vector<int> out;
+    for (int i = 0; i < 500; ++i) {
+        out.push_back(out_queue.pop().value());
+    }
+    for (auto& th: workers) {
+        th.join();
+    }
+    std::sort(out.begin(), out.end());
+    EXPECT_EQ(out, truth);
+}
+
